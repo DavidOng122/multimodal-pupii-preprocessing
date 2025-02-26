@@ -1,2 +1,2 @@
 # multimodal-pupii-preprocessing
-This pipeline processes raw pupil diameter data from virtual reality (VR) experiments, performing outlier removal, interpolation, normalization, and integration with emotion data. Designed for datasets from iMotions or similar eye-tracking systems.
+This project provides a guideline for processing pupil diameter data and integrating it with emotion expression data from multimodal datasets from iMotions10 (version 10.1.38911.4). 'Pupil_Preprocessing_Functions.py' contains functions for cleaning, filtering, interpolating, normalizing, and integrating pupil diameter measurements. 'Example.py' shows how to use those functions.
