@@ -399,29 +399,34 @@ def preprocess_integrate_emotions(df, df_pupil,selected_columns, start_time, end
     """
 
     # Remove the first 27 rows as they are merely column descriptions.
-    df_negative = df[selected_columns].iloc[27:].dropna()
-    df_negative = df_negative.loc[~(df_negative == 0).any(axis=1)]
+    df_emo = df[selected_columns].iloc[27:].dropna()
+    df_emo = df_emo.loc[~(df_emo == 0).any(axis=1)]
     
     # Rename columns using the first row as headers.
-    df_negative.columns = df_negative.iloc[0]
-    df_negative = df_negative[1:].reset_index(drop=True)
+    df_emo.columns = df_emo.iloc[0]
+    df_emo = df_emo[1:].reset_index(drop=True)
     
     # Identify numeric columns dynamically 
-    numeric_columns = [col for col in df_negative.columns if df_negative[col].str.replace('.', '', 1).str.isnumeric().all()]
+    numeric_columns = [col for col in df_emo.columns if df_emo[col].str.replace('.', '', 1).str.isnumeric().all()]
     
     # Convert identified numeric columns to numeric values
     for col in numeric_columns:
-        df_negative[col] = pd.to_numeric(df_negative[col], errors='coerce')
+        df_emo[col] = pd.to_numeric(df_emo[col], errors='coerce')
 
 
     # Filter data within the specified timestamp range
-    df_negative = df_negative[(df_negative['Timestamp'] >= start_time) & (df_negative['Timestamp'] < end_time)]
+    df_emo = df_emo[(df_emo['Timestamp'] >= start_time) & (df_emo['Timestamp'] < end_time)]
     
     
     # Round timestamps to the nearest integer before merging
-    df_negative['Timestamp'] = df_negative['Timestamp'].round(0)
+    df_emo['Timestamp'] = df_emo['Timestamp'].round(0)
 
-    df_merge = pd.merge(df_pupil, df_negative, how='outer')
+    #merge the pupil diameter dataset with expresion emotion data
+    df_merge = pd.merge(df_pupil, df_emo, on='Timestamp', how='outer')
+    df_merge = df_merge.sort_values('Timestamp')
+  
+    # Reset the index after sorting
+    df_merge = df_merge.reset_index(drop=True)
     
     return df_merge
 
