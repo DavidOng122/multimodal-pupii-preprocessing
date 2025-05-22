@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from scipy.interpolate import interp1d
+import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 from scipy.interpolate import PchipInterpolator
  
@@ -105,7 +105,7 @@ def finds_baseline_period(df_filtered, min_pupil=2, max_pupil=8, baseline_period
             (df_filtered['Timestamp'] > df_filtered['Timestamp'].iloc[0 + i]) &
             (df_filtered['Timestamp'] <= df_filtered['Timestamp'].iloc[0 + i] + baseline_period)
         ]
-    #Get the starting timestamp of the valid baseline range
+    # Get the starting timestamp of the valid baseline range
     start_baseline = df_baseline['Timestamp'].iloc[0]
     # Round to the nearest number for consistency
     start_baseline = start_baseline.round(0)
@@ -357,19 +357,19 @@ def normalize_pupil_dilation(df_mean, start_baseline, start_time, end_time):
                 The eye pupil diameter data in the annotation timestamp contains the normalized pupil dilation and the mean normalized dilation
     """
     
-    #Compute the baseline pupil diameter
+    # Compute the baseline pupil diameter
     df_baseline = df_mean[(df_mean['Timestamp'] >= start_baseline) & (df_mean['Timestamp'] <= start_baseline + 400)]
     
     baseline = df_baseline['meanDia'].mean()
 
-    #Calculate normalized pupil dilation
+    # Calculate normalized pupil dilation
     df_mean['baseline'] = baseline
     df_mean['normalized_dilation'] = (df_mean['meanDia'] - df_mean['baseline']) / df_mean['baseline']
 
-    #Remove unnecessary time stamp
+    # Remove unnecessary time stamp
     df_mean = df_mean[(df_mean['Timestamp'] >= start_time) & (df_mean['Timestamp'] < end_time)]
 
-    #Compute mean normalized pupil dilation
+    # Compute mean normalized pupil dilation
     mean_normalized_dilation = df_mean['normalized_dilation'].mean()
     df_mean['mean_normalized_dilation'] = mean_normalized_dilation
 
@@ -430,3 +430,48 @@ def preprocess_integrate_emotions(df, df_pupil,selected_columns, start_time, end
     
     return df_merge
 
+def plot_pupil_diameter(df):
+    """
+    Visualizes pupil diameter data over time 
+
+    Parameters
+    ---------
+    df : pandas.DataFrame
+        The processed multimodal dataset containing ET_PupilLeft, ET_PupilRight and meanDia.
+
+    Returns
+    -------
+    a visual representation of pupil diameter data over time
+    """
+    
+    # Create a new figure with a specified size (width = 12inches, height = 6inches)
+    plt.figure(figsize=(12, 6))
+    
+    # Plot the 'ET_PupilLeft' column against 'Timestamp' in red
+    plt.plot(df['Timestamp'], df['ET_PupilLeft'], label='ET_PupilLeft', color='red', marker='o', linestyle='None', markersize=1)
+    
+    # Plot the 'ET_PupilRight' column against 'Timestamp' in blue
+    plt.plot(df['Timestamp'], df['ET_PupilRight'], label='ET_PupilRight', color='blue', marker='o', linestyle='None', markersize=1)
+    
+    # Plot the 'meanDia' column against 'Timestamp' in green
+    plt.plot(df['Timestamp'], df['meanDia'], label='Mean Pupil Diameter', color='green', marker='o', linestyle='None', markersize=1)
+    
+    # Set the label for the x-axis
+    plt.xlabel('Timestamp (ms)')
+    
+    # Set the label for the y-axis
+    plt.ylabel('Pupil Diameter (mm)')
+    
+    # Set the plot title
+    plt.title('Processed Pupil Diameter')
+    
+    # Show the legend
+    plt.legend()
+    
+    plt.tight_layout()
+    
+    # Display the plot window
+    plt.show()
+
+
+    
