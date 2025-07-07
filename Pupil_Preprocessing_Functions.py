@@ -3,7 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 from scipy.interpolate import PchipInterpolator
- 
+from sklearn.metrics import mean_squared_error
+from scipy.interpolate import Akima1DInterpolator
+
 def process_pupil_data(df,start_time,end_time,min_pupil = 2,max_pupil = 8):
     """
     This function processes a raw multimodal dataset from the iMotions.
@@ -292,6 +294,109 @@ def pchip_interpolation_1000hz(df, pupil_column='ET_PupilLeft', timestamp_column
     
     return df_interpolated
 
+def akima_interpolation_1000hz(df, pupil_column='ET_PupilLeft', timestamp_column='Timestamp', 
+                               interp_upsampling_freq=1000, max_gap=250):
+    """
+    Applies Akima interpolation and removes interpolated data where initial dataset contains the gaps exceed 250ms.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The pupil diameter data
+    pupil_column : str
+        The name of the pupil diameter column. The default is 'ET_PupilLeft'.
+    timestamp_column : str
+        The name of the column containing timestamp data. The default is 'Timestamp'.
+    interp_upsampling_freq : int
+        The frequency after upsampling in Hz. The default: 1000 Hz.
+    max_gap : int
+        The interpolated data will be remove if the intial datasets contains the gaps larger than max_gap. The default is 250
+
+    Returns
+    -------
+    df_interpolated : pandas.DataFrame
+        DataFrame with PCHIP interpolated pupil diameter after removing the interpolated points where gaps were larger than max_gap.
+    """
+    # Calculate time gaps from initial dataset
+    df['TimeDiff'] = df[timestamp_column].diff()
+    df_pupil = df[pupil_column]
+    df_time = df[timestamp_column]
+
+    # Generate upsampled timestamps at target frequency
+    t_upsampled = np.arange(df_time.iloc[0], df_time.iloc[-1], 1000 / interp_upsampling_freq)
+
+    # Apply Akima interpolation
+    akima_interp = Akima1DInterpolator(df_time, df_pupil, method='akima')
+    dia_interp = akima_interp(t_upsampled)
+
+    # Map time gaps to interpolated points
+    gaps_raw = df['TimeDiff'].iloc[1:]
+    gaps_raw = np.append(gaps_raw, gaps_raw.iloc[-1])
+    bin_indices = np.digitize(t_upsampled, df[timestamp_column].values)
+    # Assign time differences to interpolated points
+    gaps_ms = gaps_raw[np.clip(bin_indices - 1, 0, len(gaps_raw) - 1)]
+
+    # Remove interpolated data where gaps were larger than max_gap
+    dia_interp[gaps_ms > max_gap] = np.nan
+
+    df_interpolated = pd.DataFrame({
+        'Timestamp': t_upsampled.round(0),
+        pupil_column: dia_interp
+    }).dropna()
+    
+    return df_interpolated
+
+def makima_interpolation_1000hz(df, pupil_column='ET_PupilLeft', timestamp_column='Timestamp', 
+                                interp_upsampling_freq=1000, max_gap=250):
+    """
+    Applies makima interpolation and removes interpolated data where initial dataset contains the gaps exceed 250ms.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The pupil diameter data
+    pupil_column : str
+        The name of the pupil diameter column. The default is 'ET_PupilLeft'.
+    timestamp_column : str
+        The name of the column containing timestamp data. The default is 'Timestamp'.
+    interp_upsampling_freq : int
+        The frequency after upsampling in Hz. The default: 1000 Hz.
+    max_gap : int
+        The interpolated data will be remove if the intial datasets contains the gaps larger than max_gap. The default is 250
+
+    Returns
+    -------
+    df_interpolated : pandas.DataFrame
+        DataFrame with PCHIP interpolated pupil diameter after removing the interpolated points where gaps were larger than max_gap.
+    """
+    # Calculate time gaps from initial dataset
+    df['TimeDiff'] = df[timestamp_column].diff()
+    df_pupil = df[pupil_column]
+    df_time = df[timestamp_column]
+
+    # Generate upsampled timestamps at target frequency
+    t_upsampled = np.arange(df_time.iloc[0], df_time.iloc[-1], 1000 / interp_upsampling_freq)
+
+    # Makima interpolation (requires SciPy >= 1.16)
+    makima_interp = Akima1DInterpolator(df_time, df_pupil, method='makima')
+    dia_interp = makima_interp(t_upsampled)
+
+    # Identify time different in initial dataset
+    gaps_raw = df['TimeDiff'].iloc[1:]
+    gaps_raw = np.append(gaps_raw, gaps_raw.iloc[-1])
+    bin_indices = np.digitize(t_upsampled, df[timestamp_column].values)
+    # Assign time differences to interpolated points
+    gaps_ms = gaps_raw[np.clip(bin_indices - 1, 0, len(gaps_raw) - 1)]
+    # Remove interpolated data where gaps were larger than max_gap
+    dia_interp[gaps_ms > max_gap] = np.nan
+
+    df_interpolated = pd.DataFrame({
+        'Timestamp': t_upsampled.round(0),
+        pupil_column: dia_interp
+    }).dropna()
+    
+    return df_interpolated
+
 
 def compute_mean_pupil_size(df_left, df_right):
     """
@@ -335,6 +440,86 @@ def compute_mean_pupil_size(df_left, df_right):
     
     return df_mean
 
+def evaluate_interpolations(df, pupil_column='ET_PupilLeft', timestamp_column='Timestamp', test_fraction=0.2, random_state=42):
+    """
+    Computes the performance of three interpolation methods-PCHIP, Akima, and Makima
+
+    Parameters
+    ----------
+        df : pandas.DataFrame
+            The left eye pupil diameter data
+        pupil_column : str
+            The name of the pupil diameter column. The default is 'ET_PupilLeft'. 
+        timestamp_column : str
+            The name of the timestamp column. The default is 'Timestamp'
+        test_fraction : float
+            The fraction of data to be randomly selected and held out as the test set. The data points to be removed and predicted via interpolation. The default is 0.2.
+        random_state : int
+            Random seed for reproducibility of the test/train split. The default is 42
+            
+    Returns
+    -------
+        results : dict
+            A dictionary containing the performance of three interpolation. Each key is the method name, and each value is a tuple:
+            
+            RMSE : float
+                Root Mean Squared Error between the interpolated and actual values at the test points.
+
+            Max Error : float 
+                Maximum absolute error between the interpolated and actual values at the test points.
+    """
+    # Sort and sample data
+    df = df.sort_values(timestamp_column).reset_index(drop=True)
+    x = df[timestamp_column].values
+    y = df[pupil_column].values
+
+    # Remove any NaNs from the original data before splitting
+    valid_mask = ~np.isnan(x) & ~np.isnan(y)
+    x = x[valid_mask]
+    y = y[valid_mask]
+
+    # Randomly select test indices to remove
+    rng = np.random.default_rng(random_state)
+    n = len(x)
+    test_size = int(n * test_fraction)
+    test_indices = rng.choice(n, size=test_size, replace=False)
+    train_mask = np.ones(n, dtype=bool)
+    train_mask[test_indices] = False
+
+    # Prepare train and test sets
+    x_train, y_train = x[train_mask], y[train_mask]
+    x_test, y_test = x[test_indices], y[test_indices]
+
+    # Fit interpolators on training data
+    pchip = PchipInterpolator(x_train, y_train)
+    akima = Akima1DInterpolator(x_train, y_train, method='akima')
+    makima = Akima1DInterpolator(x_train, y_train, method='makima')
+
+    # Predict at test points
+    y_pred_pchip = pchip(x_test)
+    y_pred_akima = akima(x_test)
+    y_pred_makima = makima(x_test)
+
+    # Compute error metrics, ignoring NaNs
+    def get_metrics(y_true, y_pred):
+        mask = ~np.isnan(y_true) & ~np.isnan(y_pred)
+        if np.sum(mask) == 0:
+            return np.nan, np.nan
+        rmse = np.sqrt(mean_squared_error(y_true[mask], y_pred[mask]))
+        max_err = np.max(np.abs(y_true[mask] - y_pred[mask]))
+        return rmse, max_err
+
+    results = {
+        'PCHIP': get_metrics(y_test, y_pred_pchip),
+        'Akima': get_metrics(y_test, y_pred_akima),
+        'Makima': get_metrics(y_test, y_pred_makima)
+    }
+
+    print("Interpolation Method Comparison (RMSE, Max Error):")
+    for method, (rmse, max_err) in results.items():
+        print(f"{method}: RMSE = {rmse:.4f}, Max Error = {max_err:.4f}")
+
+    return results
 
 def normalize_pupil_dilation(df_mean, start_baseline, start_time, end_time):
     """
@@ -375,7 +560,7 @@ def normalize_pupil_dilation(df_mean, start_baseline, start_time, end_time):
 
     return df_mean
 
-def preprocess_integrate_emotions(df, df_pupil,selected_columns, start_time, end_time):
+def preprocess_integrate_emotions(df, df_pupil,selected_columns, start_time, end_time, target_hz=30):
     """
     merge emotion expression with pupil dimaeter dataset
 
@@ -401,41 +586,57 @@ def preprocess_integrate_emotions(df, df_pupil,selected_columns, start_time, end
     # Remove the first 27 rows as they are merely column descriptions.
     df_emo = df[selected_columns].iloc[27:].dropna()
     df_emo = df_emo.loc[~(df_emo == 0).any(axis=1)]
-    
-    # Rename columns using the first row as headers.
     df_emo.columns = df_emo.iloc[0]
     df_emo = df_emo[1:].reset_index(drop=True)
-    
-    # Identify numeric columns dynamically 
+
+    # Identify numeric columns dynamically
     numeric_columns = [col for col in df_emo.columns if df_emo[col].str.replace('.', '', 1).str.isnumeric().all()]
-    
-    # Convert identified numeric columns to numeric values
     for col in numeric_columns:
         df_emo[col] = pd.to_numeric(df_emo[col], errors='coerce')
 
-
-    # Filter data within the specified timestamp range
+    # Filter by timestamp range
     df_emo = df_emo[(df_emo['Timestamp'] >= start_time) & (df_emo['Timestamp'] < end_time)]
-    
-    
-    # Round timestamps to the nearest integer before merging
-    df_emo['Timestamp'] = df_emo['Timestamp'].round(0)
+    # Round timestamps for consistency
+    df_emo['Timestamp'] = df_emo['Timestamp'].astype(float).round(0)
 
-    #merge the pupil diameter dataset with expresion emotion data
-    df_merge = pd.merge(df_pupil, df_emo, on='Timestamp', how='outer')
-    df_merge = df_merge.sort_values('Timestamp')
-  
-    # Reset the index after sorting
-    df_merge = df_merge.reset_index(drop=True)
-    
+    # --- Downsample pupil data ---
+    # Ensure pupil data covers the same timestamp range
+    df_pupil = df_pupil[(df_pupil['Timestamp'] >= start_time) & (df_pupil['Timestamp'] < end_time)]
+    # Round timestamps for binning
+    df_pupil['Timestamp'] = df_pupil['Timestamp'].astype(float)
+
+    # Calculate bin size in ms
+    bin_size_ms = int(1000 / target_hz)
+    # Align start time for binning
+    df_pupil['bin'] = ((df_pupil['Timestamp'] - start_time) // bin_size_ms).astype(int)
+    # Aggregate by mean (or median) within each bin
+    pupil_columns = [col for col in df_pupil.columns if col not in ['Timestamp', 'bin']]
+    df_pupil_down = df_pupil.groupby('bin').agg({
+        'Timestamp': 'first',  # or 'mean'
+        **{col: 'mean' for col in pupil_columns}
+    }).reset_index(drop=True)
+
+    # --- Merge downsampled pupil and emotion data ---
+    # Round emotion timestamps to nearest bin center for merge
+    df_emo['Timestamp'] = ((df_emo['Timestamp'] - start_time) // bin_size_ms).astype(int) * bin_size_ms + start_time
+    df_emo = df_emo.groupby('Timestamp').first().reset_index()
+
+    # Merge on Timestamp
+    df_merge = pd.merge(df_pupil_down, df_emo, on='Timestamp', how='outer')
+    df_merge = df_merge.sort_values('Timestamp').reset_index(drop=True)
+
     return df_merge
 
-def plot_pupil_diameter(df):
+def plot_pupil_diameter(df,start_time,end_time):
     """
     Visualizes pupil diameter data over time 
 
     Parameters
     ---------
+    start_time : int
+        The beginning of the test simulation. 
+    end_time : int
+        The end of the test simulation.
     df : pandas.DataFrame
         The processed multimodal dataset containing ET_PupilLeft, ET_PupilRight and meanDia.
 
@@ -444,17 +645,20 @@ def plot_pupil_diameter(df):
     a visual representation of pupil diameter data over time
     """
     
+    # Filter for the timestamp range 2000 to 3000 ms
+    filtered_df = df[(df['Timestamp'] >= start_time) & (df['Timestamp'] <= end_time)]
+    
     # Create a new figure with a specified size (width = 12inches, height = 6inches)
     plt.figure(figsize=(12, 6))
     
     # Plot the 'ET_PupilLeft' column against 'Timestamp' in red
-    plt.plot(df['Timestamp'], df['ET_PupilLeft'], label='ET_PupilLeft', color='red', marker='o', linestyle='None', markersize=1)
+    plt.plot(filtered_df['Timestamp'], filtered_df['ET_PupilLeft'], label='ET_PupilLeft', color='red', marker='o', linestyle='None', markersize=1)
     
     # Plot the 'ET_PupilRight' column against 'Timestamp' in blue
-    plt.plot(df['Timestamp'], df['ET_PupilRight'], label='ET_PupilRight', color='blue', marker='o', linestyle='None', markersize=1)
+    plt.plot(filtered_df['Timestamp'], filtered_df['ET_PupilRight'], label='ET_PupilRight', color='blue', marker='o', linestyle='None', markersize=1)
     
     # Plot the 'meanDia' column against 'Timestamp' in green
-    plt.plot(df['Timestamp'], df['meanDia'], label='Mean Pupil Diameter', color='green', marker='o', linestyle='None', markersize=1)
+    plt.plot(filtered_df['Timestamp'], filtered_df['meanDia'], label='Mean Pupil Diameter', color='green', marker='o', linestyle='None', markersize=1)
     
     # Set the label for the x-axis
     plt.xlabel('Timestamp (ms)')
@@ -464,13 +668,51 @@ def plot_pupil_diameter(df):
     
     # Set the plot title
     plt.title('Processed Pupil Diameter')
-    
     # Show the legend
     plt.legend()
     
     plt.tight_layout()
     
     # Display the plot window
+    plt.show()
+    
+def plot_left_pupil(df, pupil_column='ET_PupilLeft', timestamp_column='Timestamp',
+                    start_time=None, end_time=None, y_min=None, y_max=None):
+    """
+    Plots the left pupil diameter over time, with optional axis limits.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing pupil data.
+    pupil_column : str
+        Column name for left pupil diameter (default 'ET_PupilLeft').
+    timestamp_column : str
+        Column name for timestamps (default 'Timestamp').
+    start_time : int or float, optional
+        Lower x-axis limit (timestamp).
+    end_time : int or float, optional
+        Upper x-axis limit (timestamp).
+    y_min : float, optional
+        Lower y-axis limit.
+    y_max : float, optional
+        Upper y-axis limit.
+    """
+    plt.figure(figsize=(6, 6))
+    plt.plot(df[timestamp_column], df[pupil_column], color='red', marker='o', linestyle='None', markersize=1, label=pupil_column)
+    plt.xlabel('Timestamp (ms)')
+    plt.ylabel('Pupil Diameter (mm)')
+    plt.title('Left Pupil Diameter Over Time')
+    plt.legend()
+    plt.tight_layout()
+
+    # Set x-axis limits if provided
+    if start_time is not None and end_time is not None:
+        plt.xlim(start_time, end_time)  # [3][4][5]
+    # Set y-axis limits if provided
+    if y_min is not None and y_max is not None:
+        plt.ylim(y_min, y_max)  # [2][3][4][5]
+
     plt.show()
 
 
